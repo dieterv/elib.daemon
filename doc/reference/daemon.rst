@@ -1,5 +1,8 @@
-Daemon
-======
+elib.daemon
+===========
 
 .. automodule:: elib.daemon
-    :members:
+    :platform: Unix
+
+.. autoclass:: elib.daemon.Daemon
+    :members: __init__, start, stop

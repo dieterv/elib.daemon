@@ -19,130 +19,242 @@
 
 
 '''
-The elib.daemon module can be used on Linux systems to fork a daemon process. It
-is based on `Jürgen Hermann's recipe <http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/66012>`_.
+The elib.daemon module can be used on Unix systems to fork a daemon process.
 
-An example script might look like this::
-
-    from util import daemon
-
-    counter = daemon.Daemon(
-        stdin="/dev/null",
-        stdout="/tmp/daemon.log",
-        stderr="/tmp/daemon.log",
-        pidfile="/var/run/counter/counter.pid",
-        user="nobody"
-    )
-
-    if __name__ == "__main__":
-        if counter.service():
-            import sys, os, time
-            sys.stdout.write("Daemon started with pid %d\n" % os.getpid())
-            sys.stdout.write("Daemon stdout output\n")
-            sys.stderr.write("Daemon stderr output\n")
-            sys.stdout.flush()
-            c = 0
-            while True:
-                sys.stdout.write('%d: %s\n' % (c, time.ctime(time.time())))
-                sys.stdout.flush()
-                c += 1
-                time.sleep(1)
+It is based on `Jürgen Hermann's recipe <http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/66012>`_
+and the comments following his post, information gained from the books Advanced
+UNIX Programming (2nd Edition) and Advanced Programming in the UNIX Environment.
 '''
 
 
-__all__ = ['install', 'install_module']
+__all__ = ['Daemon']
 __version__ = '0.0.3'
 __docformat__ = 'restructuredtext'
 
 
-import sys
 import os
-
+import sys
 import grp
 import pwd
+import resource
 import signal
 
 
-UMASK = 0        # File mode creation mask of the daemon.
-WORKDIR = "/"    # Default working directory for the daemon.
+UMASK = 0        # Default file mode creation mask of the daemon.
 MAXFD = 1024     # Default maximum for the number of available file descriptors.
 
 
 class Daemon(object):
-    """
-    The <class>Daemon</class> class provides methods for <pyref method="start">starting</pyref>
-    and <pyref method="stop">stopping</pyref> a daemon process as well as
-    <pyref method="service">handling command line arguments</pyref>.
-    """
-    def __init__(self, stdin="/dev/null", stdout="/dev/null", stderr="/dev/null", pidfile=None, user=None, group=None, exitfunc=None):
-        """
-        <par>The <arg>stdin</arg>, <arg>stdout</arg>, and <arg>stderr</arg> arguments
-        are file names that will be opened and be used to replace the standard file
-        descriptors in <lit>sys.stdin</lit>, <lit>sys.stdout</lit>, and
-        <lit>sys.stderr</lit>. These arguments are optional and default to
-        <lit>"/dev/null"</lit>. Note that stderr is opened unbuffered, so if it
-        shares a file with stdout then interleaved output may not appear in the
-        order that you expect.</par>
+    '''
+    The `elib.deamon.Daemon` class encapsulates all behavior expected of a
+    well mannered forked daemon process.
+    '''
+    def __init__(self, pidfile, workdir='/',
+                 sighupfunc=None, sigtermfunc=None,
+                 user=None, group=None,
+                 stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
+        '''
+        :param pidfile: must be the name of a file. The newly forked daemon
+                        process will write it's pid to this file.
+                        `Daemon.stop` uses this file to kill the daemon process
+                        specified in the pidfile.
+        :param workdir: when the daemon process starts, it will change the current
+                        working directory to `workdir`.
+                        This argument is optional and defaults to `/`.
+        :param sighupfunc: a callable with the signature `sighupfunc(signum, frame)`
+                           that will be called when the forked daemon process
+                           receives a `SIG_HUP` signal. You can use this to reload
+                           configuration files, etc.
+                           This argument is optional and defaults to `None`.
+                           Note that exceptions raised by `sighupfunc` are silently
+                           ignored.
+        :param sigtermfunc: a callable with the signature `sigtermfunc(signum, frame)`
+                            that will be called when the forked daemon process
+                            receives a `SIG_TERM` signal, before the pidfile is
+                            removed and the process exits.
+                            This argument is optional and defaults to `None`.
+                            Note that exceptions raised by `sigtermfunc` are
+                            silently ignored.
+        :param user: can be the name or uid of a user. `Daemon.start` will switch
+                     to this user to run the service. If user is None no user
+                     switching will be done.
+        :param group: can be the name or gid of a group. `Daemon.start` will
+                      switch to this group to run the service. If group is None
+                      no group switching will be done.
+        :param stdin: file name that will be opened and used to replace the
+                      standard sys.stdin file descriptor.
+                      This argument is optional and defaults to `/dev/null`.
+        :param stdout: file name that will be opened and used to replace the
+                       standard sys.stdout file descriptor.
+                       This argument is optional and defaults to `/dev/null`.
+        :param stderr: file name that will be opened and used to replace the
+                       standard sys.stderr file descriptor.
+                       This argument is optional and defaults to `/dev/null`.
+                       Note that stderr is opened unbuffered, so if it shares a
+                       file with stdout then interleaved output may not appear
+                       in the order that you expect.
+        '''
+        self.pidfile = pidfile
+        self.workdir = workdir
+        self.workdir = workdir
+        self.sighupfunc = sighupfunc
+        self.sigtermfunc = sigtermfunc
 
-        <par><arg>pidfile</arg> must be the name of a file. <method>start</method>
-        will write the pid of the newly forked daemon to this file. <method>stop</method>
-        uses this file to kill the daemon.</par>
+        if isinstance(user, basestring):
+            self.user = pwd.getpwnam(user).pw_uid
+        elif isinstance(user, int):
+            self.user = user
+        else:
+            raise TypeError('user must be a string or int, but received a %s' % type(user))
 
-        <par><arg>user</arg> can be the name or uid of a user. <method>start</method>
-        will switch to this user for running the service. If <arg>user</arg> is
-        <lit>None</lit> no user switching will be done.</par>
+        if isinstance(group, basestring):
+            self.group = grp.getgrnam(group).gr_gid
+        elif isinstance(group, int):
+            self.group = group
+        else:
+            raise TypeError('group must be a string or int, but received a %s' % type(group))
 
-        <par>In the same way <arg>group</arg> can be the name or gid of a group.
-        <method>start</method> will switch to this group.</par>
-        """
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
-        self.pidfile = pidfile
-        self.user = user
-        self.group = group
-        self.exitfunc = exitfunc
 
-    def openstreams(self):
-        """
-        Open the standard file descriptors stdin, stdout and stderr as specified
-        in the constructor.
-        """
-        sys.stdout.flush()
-        sys.stderr.flush()
+    def start(self):
+        '''
+        Daemonize the running script. When this method returns the process is
+        completely decoupled from the parent environment.
+        '''
+        # Note: what's with sys.exit() and os._exit()?
+        # os._exit is like sys.exit(), but it doesn't call any functions registered
+        # with atexit (and on_exit) or any registered signal handlers.  It also
+        # closes any open file descriptors.  Using sys.exit() may cause all stdio
+        # streams to be flushed twice and any temporary files may be unexpectedly
+        # removed.  It's therefore recommended that child branches of a fork()
+        # and the parent branch of a daemon use os._exit().
 
-        # Todo: Why does this not work????
-        # Close all open file descriptors.  This prevents the child from keeping
-        # open any file descriptors inherited from the parent.  There is a variety
-        # of methods to accomplish this task.  Three are listed below.
-        #maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
-        #if (maxfd == resource.RLIM_INFINITY):
-        #    maxfd = MAXFD
+        # Reset the file mode creation mask.
+        os.umask(UMASK)
+
+        # Fork the first child and exit the parent immediately.
+        try:
+            pid = os.fork()
+
+            if pid != 0:
+                os._exit(os.EX_OK)
+        except OSError, e:
+            sys.stderr.write('First fork failed: (%d) %s\n' % (e.errno, e.strerror))
+            sys.stderr.flush()
+            os._exit(os.EX_OSERR)
+
+        # To become the session leader of this new session and the process group
+        # leader of the new process group, we call os.setsid().  The process is
+        # also guaranteed not to have a controlling terminal.
+        os.setsid()
+
+        # Fork the second child and exit the parent immediately.
+        # This causes the second child process to be orphaned, making the init
+        # process responsible for its cleanup.  And, since the first child is
+        # a session leader without a controlling terminal, it's possible for
+        # it to acquire one by opening a terminal in the future (System V-
+        # based systems).  This second fork guarantees that the child is no
+        # longer a session leader, preventing the daemon from ever acquiring
+        # a controlling terminal.
+        try:
+            pid = os.fork()
+
+            if pid != 0:
+                os._exit(os.EX_OK)
+        except OSError, e:
+            sys.stderr.write('Second fork failed: (%d) %s\n' % (e.errno, e.strerror))
+            sys.stderr.flush()
+            os._exit(os.EX_OSERR)
+
+        # Since the current working directory may be on a mounted filesystem,
+        # we avoid the issue of not being able to unmount that filesystem at
+        # shutdown time by changing the current directory to self.workir.
+        # This is usually the root directory.
+        os.chdir(self.workdir)
+
+        # Write pid file
+        if not os.path.isdir(os.path.abspath(os.path.dirname(self.pidfile))):
+            os.makedirs(os.path.dirname(self.pidfile), 0o755)
+
+        open(self.pidfile, 'w').write(str(os.getpid()))
+
+        # Close all open file descriptors. This prevents the child from keeping
+        # open any file descriptors inherited from the parent.
+        maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+
+        if (maxfd == resource.RLIM_INFINITY):
+            maxfd = MAXFD
 
         # Iterate through and close all file descriptors.
-        #for fd in range(0, maxfd):
-        #    try:
-        #        os.close(fd)
-        #    except OSError:    # ERROR, fd wasn't open to begin with (ignored)
-        #        pass
+        for fd in range(0, maxfd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
-        si = open(self.stdin, "r")
-        so = open(self.stdout, "a+")
-        se = open(self.stderr, "a+", 0)
-        os.dup2(si.fileno(), sys.stdin.fileno())
-        os.dup2(so.fileno(), sys.stdout.fileno())
-        os.dup2(se.fileno(), sys.stderr.fileno())
+        # Reopen file descriptors 0, 1 and 2 (stdin, stdout and stderr).
+        sys.stdin = sys.__stdin__ = open(self.stdin, 'r')
+        sys.stdout = sys.__stdout__ = open(self.stdout, 'a+')
+        sys.stderr = sys.__stderr__ = open(self.stderr, 'a+', 0)
 
-    def handlesighup(self, signum, frame):
-        """
-        Handle a <lit>SIG_HUP</lit> signal: Reopen standard file descriptors.
-        """
-        self.openstreams()
+        # Attach signal handles
+        signal.signal(signal.SIGHUP, self._handlesighup)
+        signal.signal(signal.SIGTERM, self._handlesigterm)
 
-    def handlesigterm(self, signum, frame):
-        """
-        Handle a <lit>SIG_TERM</lit> signal: Remove the pid file and exit.
-        """
+        # Switch effective group
+        if self.group is not None:
+            os.setegid(self.group)
+
+        # Switch effective user
+        if self.user is not None:
+            os.seteuid(self.user)
+            os.environ['HOME'] = pwd.getpwuid(self.user).pw_dir
+
+    def stop(self):
+        '''
+        Sends a SIGTERM signal to the running daemon, if any. The pid of the
+        running daemon will be read from the pidfile specified in the constructor.
+        '''
+        if self.pidfile is None:
+            sys.exit('Error: no pid file specified')
+        elif not os.path.isfile(self.pidfile):
+            sys.exit('Error: pid file \'%s\' does not exist' % self.pidfile)
+
+        try:
+            pid = int(open(self.pidfile, 'rb').read().strip())
+        except IOError, exc:
+            sys.exit('Error: can\'t open pidfile %s: %s' % (self.pidfile, str(exc)))
+        except ValueError:
+            sys.exit('Error: mangled pidfile %s: %r' % self.pidfile)
+
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            # process already disappeared -> ignore
+            pass
+
+    def _handlesighup(self, signum, frame):
+        '''
+        Passes a SIG_HUP signal to `Daemon.sighupfunc`.
+        '''
+        if self.sighupfunc is not None and callable(self.sighupfunc):
+            try:
+                self.sighupfunc(signum, frame)
+            except:
+                pass
+
+    def _handlesigterm(self, signum, frame):
+        '''
+        Handle a SIG_TERM signal: Remove the pid file and exit.
+        '''
+        if self.sigtermfunc is not None and callable(self.sigtermfunc):
+            try:
+                self.sigtermfunc(signum, frame)
+            except:
+                pass
+
         if self.pidfile is not None:
             try:
                 os.remove(self.pidfile)
@@ -150,134 +262,5 @@ class Daemon(object):
                 raise
             except Exception:
                 pass
-        self.exitfunc(signum, frame)
-        sys.exit(0)
 
-    def switchuser(self, user, group):
-        """
-        Switch the effective user and group. If <arg>user</arg> is <lit>None</lit>
-        and <arg>group</arg> is nothing will be done. <arg>user</arg> and <arg>group</arg>
-        can be an <class>int</class> (i.e. a user/group id) or <class>str</class>
-        (a user/group name).
-        """
-        if group is not None:
-            if isinstance(group, basestring):
-                group = grp.getgrnam(group).gr_gid
-            os.setegid(group)
-        if user is not None:
-            if isinstance(user, basestring):
-                user = pwd.getpwnam(user).pw_uid
-            os.seteuid(user)
-            if "HOME" in os.environ:
-                os.environ["HOME"] = pwd.getpwuid(user).pw_dir
-
-    def start(self):
-        """
-        Daemonize the running script. When this method returns the process is
-        completely decoupled from the parent environment.
-        """
-        try:
-            pid = os.fork()
-        except OSError, e:
-            raise Exception, "%s [%d]" % (e.strerror, e.errno)
-
-        if (pid == 0):    # The first child.
-            # To become the session leader of this new session and the process group
-            # leader of the new process group, we call os.setsid().  The process is
-            # also guaranteed not to have a controlling terminal.
-            os.setsid()
-
-            try:
-                # Fork a second child and exit immediately to prevent zombies.  This
-                # causes the second child process to be orphaned, making the init
-                # process responsible for its cleanup.  And, since the first child is
-                # a session leader without a controlling terminal, it's possible for
-                # it to acquire one by opening a terminal in the future (System V-
-                # based systems).  This second fork guarantees that the child is no
-                # longer a session leader, preventing the daemon from ever acquiring
-                # a controlling terminal.
-                pid = os.fork()    # Fork a second child.
-            except OSError, e:
-                raise Exception, "%s [%d]" % (e.strerror, e.errno)
-
-            if (pid == 0):    # The second child.
-                # Since the current working directory may be a mounted filesystem, we
-                # avoid the issue of not being able to unmount the filesystem at
-                # shutdown time by changing it to the root directory.
-                os.chdir(WORKDIR)
-                # We probably don't want the file mode creation mask inherited from
-                # the parent, so we give the child complete control over permissions.
-                os.umask(UMASK)
-            else:
-                # exit() or _exit()?  See below.
-                os._exit(0)    # Exit parent (the first child) of the second child.
-        else:
-            # exit() or _exit()?
-            # _exit is like exit(), but it doesn't call any functions registered
-            # with atexit (and on_exit) or any registered signal handlers.  It also
-            # closes any open file descriptors.  Using exit() may cause all stdio
-            # streams to be flushed twice and any temporary files may be unexpectedly
-            # removed.  It's therefore recommended that child branches of a fork()
-            # and the parent branch(es) of a daemon use _exit().
-            os._exit(0)    # Exit parent of the first child.
-
-        # Switch user
-        if (not self.user is None) and (not self.group is None):
-            self.switchuser(self.user, self.group)
-
-        # Redirect standard file descriptors (will belong to the new user)
-        self.openstreams()
-
-        # Write pid file (will belong to the new user)
-        if self.pidfile is not None:
-            open(self.pidfile, "wb").write(str(os.getpid()))
-
-        # Reopen file descriptors on SIGHUP
-        signal.signal(signal.SIGHUP, self.handlesighup)
-
-        # Remove pid file and exit on SIGTERM
-        signal.signal(signal.SIGTERM, self.handlesigterm)
-
-    def stop(self):
-        """
-        Send a <lit>SIGTERM</lit> signal to a running daemon. The pid of the
-        daemon will be read from the pidfile specified in the constructor.
-        """
-        if self.pidfile is None:
-            sys.exit("no pidfile specified")
-        try:
-            pidfile = open(self.pidfile, "rb")
-        except IOError, exc:
-            sys.exit("can't open pidfile %s: %s" % (self.pidfile, str(exc)))
-        data = pidfile.read()
-        try:
-            pid = int(data)
-        except ValueError:
-            sys.exit("mangled pidfile %s: %r" % (self.pidfile, data))
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            # process already disappeared -> ignore
-            pass
-
-    def service(self, args=None):
-        """
-        <par>Handle command line arguments and start or stop the daemon accordingly.</par>
-
-        <par><arg>args</arg> must be a list of command line arguments (including the
-        program name in <lit>args[0]</lit>). If <arg>args</arg> is <lit>None</lit>
-        or unspecified <lit>sys.argv</lit> is used.</par>
-
-        <par>The return value is true, if <option>start</option> has been specified
-        as the command line argument, i.e. if the daemon should be started.</par>
-        """
-        if args is None:
-            args = sys.argv
-        if len(args) < 2 or args[1] not in ("start", "stop"):
-            sys.exit("Usage: %s (start|stop)" % args[0])
-        if args[1] == "start":
-            self.start()
-            return True
-        else:
-            self.stop()
-            return False
+        sys.exit(os.EX_OK)

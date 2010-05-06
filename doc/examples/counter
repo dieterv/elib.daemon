@@ -1,0 +1,53 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
+import os
+import sys
+import time
+
+from elib.daemon import Daemon
+
+
+def count():
+    c = 0
+
+    while True:
+        try:
+            if c % 2 == 0:
+                sys.stdout.write('%d: %s\n' % (c, time.ctime(time.time())))
+                sys.stdout.flush()
+            else:
+                sys.stderr.write('%d: %s\n' % (c, time.ctime(time.time())))
+                sys.stderr.flush()
+
+            c += 1
+            time.sleep(1)
+        except BaseException:
+            sys.exit(0)
+
+def main(args):
+    if '--daemon' in args:
+        daemon = Daemon(pidfile='/var/run/counter/counter.pid',
+                        user='nobody',
+                        group='nogroup',
+                        stdin='/dev/null',
+                        stdout='/tmp/counter.log',
+                        stderr='/tmp/counter.log')
+
+        if '--start' in args:
+            daemon.start()
+
+            sys.stdout.write('Daemon started with pid %d\n' % os.getpid())
+            sys.stdout.flush()
+        elif '--stop' in args:
+            daemon.stop()
+            sys.exit(0)
+        else:
+            sys.exit('Usage: %s (--daemon --start|--stop)' % args[0])
+
+    count()
+
+
+if __name__ == '__main__':
+    main(sys.argv)
