@@ -13,18 +13,15 @@ def count():
     c = 0
 
     while True:
-        try:
-            if c % 2 == 0:
-                sys.stdout.write('%d: %s\n' % (c, time.ctime(time.time())))
-                sys.stdout.flush()
-            else:
-                sys.stderr.write('%d: %s\n' % (c, time.ctime(time.time())))
-                sys.stderr.flush()
+        if c % 2 == 0:
+            sys.stdout.write('%d: %s\n' % (c, time.ctime(time.time())))
+            sys.stdout.flush()
+        else:
+            sys.stderr.write('%d: %s\n' % (c, time.ctime(time.time())))
+            sys.stderr.flush()
 
-            c += 1
-            time.sleep(1)
-        except BaseException:
-            sys.exit(0)
+        c += 1
+        time.sleep(1)
 
 def main(args):
     if '--daemon' in args:
@@ -46,7 +43,12 @@ def main(args):
         else:
             sys.exit('Usage: %s (--daemon --start|--stop)' % args[0])
 
-    count()
+    try:
+        count()
+    except BaseException:
+        # When running as an interactive program (thus not daemonized),
+        # we want to exit on ^C.
+        sys.exit(0)
 
 
 if __name__ == '__main__':
