@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 
 
@@ -45,9 +45,9 @@ def main(args):
 
     try:
         count()
-    except BaseException:
+    except KeyboardInterrupt:
         # When running as an interactive program (thus not daemonized),
-        # we want to exit on ^C.
+        # we want to exit cleanly on ^C.
         sys.exit(0)
 
 
