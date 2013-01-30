@@ -28,7 +28,7 @@ UNIX Programming (2nd Edition)" and "Advanced Programming in the UNIX Environmen
 
 
 __all__ = ['Daemon']
-__version__ = '0.0.6'
+__version__ = '0.0.7'
 __docformat__ = 'restructuredtext'
 
 
