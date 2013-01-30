@@ -1,0 +1,8 @@
+include COPYING
+include COPYING.LESSER
+include MANIFEST.in
+include README
+
+include distribute_setup.py
+include setup.py
+include setup.cfg

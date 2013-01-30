@@ -35,14 +35,13 @@ def version():
 
 
 setup(namespace_packages=['elib'],
-      name = 'elib.daemon',
+      name = 'elib-daemon',
       version = version(),
-      description = 'Enhanced internationalization (I18N) services for your Python modules and applications',
+      description = 'Daemon implementation',
       long_description = read('README'),
       author = 'Dieter Verfaillie',
       author_email = 'dieterv@optionexplicit.be',
       url = 'http://github.com/dieterv/elib.daemon/',
-      #mailinglist = '',
       license = 'GNU Lesser General Public License',
       classifiers =
           ['Development Status :: 4 - Beta',
@@ -60,7 +59,4 @@ setup(namespace_packages=['elib'],
       include_package_data = True,
 
       packages = find_packages('lib'),
-      package_dir = {'': 'lib'},
-
-      tests_require = ['nose'],
-      test_suite = 'nose.collector')
+      package_dir = {'': 'lib'})
