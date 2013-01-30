@@ -28,7 +28,7 @@ UNIX Programming (2nd Edition)" and "Advanced Programming in the UNIX Environmen
 
 
 __all__ = ['Daemon']
-__version__ = '0.0.5'
+__version__ = '0.0.6'
 __docformat__ = 'restructuredtext'
 
 
@@ -76,12 +76,11 @@ class Daemon(object):
         :param stdout: file name that will be opened and used to replace the
                        standard sys.stdout file descriptor.
                        This argument is optional and defaults to `/dev/null`.
+                       Note that stdout is opened unbuffered.
         :param stderr: file name that will be opened and used to replace the
                        standard sys.stderr file descriptor.
                        This argument is optional and defaults to `/dev/null`.
-                       Note that stderr is opened unbuffered, so if it shares a
-                       file with stdout then interleaved output may not appear
-                       in the order that you expect.
+                       Note that stderr is opened unbuffered.
         '''
         if pidfile is None:
             sys.exit('Error: no pid file specified')
@@ -241,7 +240,7 @@ class Daemon(object):
         sys.__stdin__ = sys.stdin
 
         sys.stdout.flush()
-        so = open(self.stdout, "a+")
+        so = open(self.stdout, "a+", 0)
         os.close(sys.stdout.fileno())
         os.dup2(so.fileno(), sys.stdout.fileno())
         sys.__stdout__ = sys.stdout
