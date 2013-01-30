@@ -22,7 +22,7 @@
 import os
 import re
 
-from ez_setup import use_setuptools; use_setuptools()
+from distribute_setup import use_setuptools; use_setuptools()
 from setuptools import setup, find_packages
 
 
@@ -55,7 +55,7 @@ setup(namespace_packages=['elib'],
            'Topic :: System',
            'Topic :: Software Development :: Libraries :: Python Modules'],
 
-      install_requires = ['setuptools'],
+      install_requires = ['distribute'],
       zip_safe = False,
       include_package_data = True,
 
